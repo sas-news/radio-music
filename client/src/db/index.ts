@@ -48,17 +48,35 @@ export async function saveImportResult(
       });
     }
 
-    const songs: Song[] = videos.map((v) => ({
-      videoId: v.videoId,
-      title: v.title,
-      author: v.author,
-      durationSec: v.durationSec,
-      thumbnail: v.thumbnail,
-      position: v.position,
-      analysis: null,
-      analyzedAt: null,
-      playlistId,
-    }));
+    // 既存レコードを引き継ぐ（再インポート/同期で重複や分析結果の消失を防ぐ）
+    const existingSongs = await db.songs.where('playlistId').equals(playlistId).toArray();
+    const existingByVideoId = new Map(existingSongs.map((s) => [s.videoId, s]));
+
+    const songs: Song[] = videos.map((v) => {
+      const prev = existingByVideoId.get(v.videoId);
+      return {
+        ...(prev?.id !== undefined ? { id: prev.id } : {}),
+        videoId: v.videoId,
+        title: v.title,
+        author: v.author,
+        durationSec: v.durationSec,
+        thumbnail: v.thumbnail,
+        position: v.position,
+        analysis: prev?.analysis ?? null,
+        analyzedAt: prev?.analyzedAt ?? null,
+        playlistId,
+      };
+    });
+
+    // インポート結果に含まれない既存行（YouTube側で削除済み・過去の重複行）を削除
+    const keepIds = new Set(
+      songs.map((s) => s.id).filter((id): id is number => id !== undefined)
+    );
+    await db.songs
+      .where('playlistId')
+      .equals(playlistId)
+      .filter((s) => !keepIds.has(s.id!))
+      .delete();
 
     await db.songs.bulkPut(songs);
   });
@@ -74,10 +92,11 @@ export async function updateSongAnalysis(
   });
 }
 
-export async function removeSongs(videoIds: string[]): Promise<void> {
-  for (const vid of videoIds) {
-    await db.songs.where('videoId').equals(vid).delete();
-  }
+export async function removeSongs(playlistId: string, videoIds: string[]): Promise<void> {
+  await db.songs
+    .where('[playlistId+videoId]')
+    .anyOf(videoIds.map((vid) => [playlistId, vid]))
+    .delete();
 }
 
 export function getAllSongs(playlistId?: string): Promise<Song[]> {

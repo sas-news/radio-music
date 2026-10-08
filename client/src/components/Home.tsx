@@ -22,7 +22,6 @@ export default function Home() {
   const { playQueue } = usePlayerStore();
 
   const [url, setUrl] = useState('');
-  const [syncUrl, setSyncUrl] = useState('');
 
   useEffect(() => {
     loadPlaylists();
@@ -40,20 +39,17 @@ export default function Home() {
     setUrl('');
   };
 
-  const handleSync = async () => {
-    const target = syncUrl.trim() || url.trim();
-    if (!target) return;
-    await syncPlaylist(target);
+  const handleSync = async (playlistId: string) => {
+    await syncPlaylist(`https://www.youtube.com/playlist?list=${playlistId}`);
   };
 
-  const handlePlayAll = (playlist: Playlist) => {
+  const handlePlayAll = async (playlist: Playlist) => {
     selectPlaylist(playlist.playlistId);
-    setTimeout(() => {
-      const { songs: currentSongs } = usePlaylistStore.getState();
-      if (currentSongs.length > 0) {
-        playQueue(currentSongs);
-      }
-    }, 100);
+    await loadSongs(playlist.playlistId);
+    const { songs: currentSongs } = usePlaylistStore.getState();
+    if (currentSongs.length > 0) {
+      playQueue(currentSongs);
+    }
   };
 
   return (
@@ -138,8 +134,7 @@ export default function Home() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        setSyncUrl(pl.playlistId);
-                        handleSync();
+                        handleSync(pl.playlistId);
                       }}
                       className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg text-xs font-medium transition-colors"
                     >

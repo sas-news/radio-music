@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Playlist, Song, SongAnalysis } from '../types';
+import type { Playlist, Song } from '../types';
 import * as db from '../db';
 import * as api from '../api/client';
 
@@ -69,25 +69,19 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   syncPlaylist: async (url) => {
     set({ isImporting: true, importError: null });
     try {
-      const { songs: currentSongs } = get();
-      const previous = currentSongs.map((s) => ({ videoId: s.videoId, title: s.title }));
+      // 同期対象プレイリストの曲をpreviousとして送る（選択中リストと無関係に正しくdiffするため）
+      const playlistKey = url.match(/[?&]list=([^&]+)/)?.[1] ?? url;
+      const prevSongs = await db.getAllSongs(playlistKey);
+      const previous = prevSongs.map((s) => ({ videoId: s.videoId, title: s.title }));
       const result = await api.importPlaylist(url, previous);
 
-      if (result.diff) {
-        if (result.diff.removed.length > 0) {
-          await db.removeSongs(result.diff.removed.map((r) => r.videoId));
-        }
+      if (result.diff && result.diff.removed.length > 0) {
+        await db.removeSongs(result.meta.id, result.diff.removed.map((r) => r.videoId));
       }
 
       await db.saveImportResult(result.meta.id, result.meta, result.videos);
       await get().loadSongs(result.meta.id);
-
-      if (result.diff) {
-        set({
-          isImporting: false,
-          importError: null,
-        });
-      }
+      set({ isImporting: false });
     } catch (err) {
       set({ isImporting: false, importError: err instanceof Error ? err.message : 'Sync failed' });
     }
@@ -105,7 +99,9 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       );
 
       for (const item of analyses) {
-        await db.updateSongAnalysis(item.videoId, item.analysis as SongAnalysis);
+        if (item.analysis) {
+          await db.updateSongAnalysis(item.videoId, item.analysis);
+        }
       }
 
       await get().loadSongs(get().selectedPlaylistId || undefined);
