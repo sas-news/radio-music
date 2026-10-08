@@ -18,13 +18,21 @@ export interface PlaylistMeta {
 }
 
 function extractPlaylistId(urlOrId: string): string {
-  if (/^[A-Za-z0-9_-]{34}$/.test(urlOrId)) return urlOrId;
   const match = urlOrId.match(/[?&]list=([^&]+)/);
   if (match) return match[1];
+  if (/^[A-Za-z0-9_-]+$/.test(urlOrId)) return urlOrId;
   throw new Error('プレイリストURLまたはIDを認識できませんでした');
 }
 
 const RATE_LIMIT_MS = 300;
+
+// 'm:ss' / 'h:mm:ss' 形式のテキストを秒に変換
+function parseDurationText(text: unknown): number {
+  if (typeof text !== 'string') return 0;
+  const parts = text.trim().split(':').map(Number);
+  if (parts.length === 0 || parts.some(Number.isNaN)) return 0;
+  return parts.reduce((acc, p) => acc * 60 + p, 0);
+}
 
 export async function fetchPlaylist(
   urlOrId: string
@@ -40,7 +48,13 @@ export async function fetchPlaylist(
 
   const playlistMeta = playlist as unknown as {
     id: string;
-    info: { title: string; author?: { name: string }; thumbnail?: string; total_items: number };
+    info: {
+      title: string;
+      author?: { name: string };
+      thumbnails?: { url: string }[];
+      thumbnail?: string;
+      total_items?: number | string;
+    };
     items: unknown[];
     has_continuation: boolean;
     getContinuation: () => Promise<typeof playlist>;
@@ -50,15 +64,17 @@ export async function fetchPlaylist(
     id: playlistId,
     title: playlistMeta.info.title || 'Untitled Playlist',
     author: playlistMeta.info.author?.name || 'Unknown',
-    thumbnail: playlistMeta.info.thumbnail || '',
-    videoCount: playlistMeta.info.total_items || 0,
+    thumbnail:
+      playlistMeta.info.thumbnails?.[0]?.url || playlistMeta.info.thumbnail || '',
+    videoCount:
+      parseInt(String(playlistMeta.info.total_items ?? '').replace(/[^\d]/g, ''), 10) || 0,
   };
 
   const videos: ExtractedVideo[] = [];
 
   const collectVideos = (page: typeof playlist) => {
-    const pageData = page as unknown as { items: unknown[] };
-    for (const item of pageData.items) {
+    const pageData = page as unknown as { items?: unknown[] };
+    for (const item of pageData.items ?? []) {
       const v = item as Record<string, unknown>;
       if (v.type === 'PlaylistVideo') {
         videos.push({
@@ -73,6 +89,35 @@ export async function fetchPlaylist(
             : '',
           position: Number((v as { index?: { text?: string } }).index?.text) || 0,
         });
+      } else if (v.type === 'LockupView' && v.content_type === 'VIDEO') {
+        // youtubei.js v18以降、プレイリストの項目はLockupViewとして返る
+        const lockupMeta = v.metadata as {
+          title?: { text?: string };
+          metadata?: { metadata_rows?: { metadata_parts?: { text?: { text?: string } }[] }[] };
+        } | undefined;
+        const contentImage = v.content_image as {
+          image?: { url: string }[];
+          overlays?: { badges?: { text?: string }[] }[];
+        } | undefined;
+
+        let durationSec = 0;
+        for (const overlay of contentImage?.overlays ?? []) {
+          for (const badge of overlay.badges ?? []) {
+            const parsed = parseDurationText(badge.text);
+            if (parsed > 0) durationSec = durationSec || parsed;
+          }
+        }
+
+        videos.push({
+          videoId: String(v.content_id || ''),
+          title: String(lockupMeta?.title?.text || ''),
+          author: String(
+            lockupMeta?.metadata?.metadata_rows?.[0]?.metadata_parts?.[0]?.text?.text || ''
+          ),
+          durationSec,
+          thumbnail: contentImage?.image?.[0]?.url ? String(contentImage.image[0].url) : '',
+          position: videos.length,
+        });
       }
     }
   };
@@ -85,6 +130,8 @@ export async function fetchPlaylist(
     page = await page.getContinuation();
     collectVideos(page);
   }
+
+  if (!meta.videoCount) meta.videoCount = videos.length;
 
   return { meta, videos };
 }
