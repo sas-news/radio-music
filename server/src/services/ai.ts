@@ -83,12 +83,14 @@ Genre examples: J-Pop, J-Rock, Anison, Vocaloid, K-Pop, Pop, Rock, Hip-Hop, R&B,
 export async function analyzeBatch(
   songs: { title: string; author: string }[],
   batchSize = 10
-): Promise<SongAnalysis[]> {
-  const results: SongAnalysis[] = [];
+): Promise<(SongAnalysis | null)[]> {
+  const results: (SongAnalysis | null)[] = [];
   for (let i = 0; i < songs.length; i += batchSize) {
     const batch = songs.slice(i, i + batchSize);
     const batchResults = await Promise.all(
-      batch.map((s) => analyzeSong(s.title, s.author))
+      batch.map((s) =>
+        analyzeSong(s.title, s.author).catch(() => null)
+      )
     );
     results.push(...batchResults);
   }

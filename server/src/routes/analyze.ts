@@ -33,7 +33,7 @@ router.post('/analyze', async (req: Request, res: Response) => {
 
     const song = videos[0];
     const analysis = await analyzeSong(song.title, song.author);
-    res.json({ videoId: song.videoId, analysis });
+    res.json({ analyses: [{ videoId: song.videoId, analysis }] });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     res.status(500).json({ error: message });

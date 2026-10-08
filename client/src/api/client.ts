@@ -31,7 +31,7 @@ export async function importPlaylist(
 export async function analyzeSongs(
   videos: { videoId: string; title: string; author: string }[],
   batch?: boolean
-): Promise<{ analyses: { videoId: string; analysis: SongAnalysis }[] }> {
+): Promise<{ analyses: { videoId: string; analysis: SongAnalysis | null }[] }> {
   return post('/analyze/analyze', { videos, batch: batch ?? videos.length > 1 });
 }
 
